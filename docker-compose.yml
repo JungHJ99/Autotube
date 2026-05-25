@@ -1,0 +1,50 @@
+# autotube fish-speech v1.5.1 API container.
+#
+# Starts the fish-speech tools/api_server.py automatically on container start,
+# exposes /v1/tts on http://127.0.0.1:8080, and mounts the autotube voices /
+# output folders at the *same path* inside the container so the client can
+# pass host paths directly.
+#
+# 2026-05-18: tried to migrate to OpenAudio S1-mini for better Korean quality.
+# Patches under patches/ (dac_inference.py, tokenizer.py, vq_manager.py,
+# text2semantic_inference.py) got past every blocker except the final ~200 MB
+# OOM in the codec decoder on an 8 GB GPU with ~700 MB of desktop graphics
+# apps active. Reverted to v1.5+rp1.5 which is the validated baseline.
+
+services:
+  fish-speech:
+    image: fishaudio/fish-speech:v1.5.1
+    container_name: autotube-fish-speech
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      # Mount v1.5 checkpoints into the path the v1.5.1 image expects.
+      - /home/hjhj/autotube/fish_speech_checkpoints/fish-speech-1.5:/opt/fish-speech/checkpoints/fish-speech-1.5:ro
+      # Mount voices read-only at the SAME path host & container.
+      - /home/hjhj/autotube/voices:/home/hjhj/autotube/voices:ro
+      # Mount output read-write so the client can have the container's
+      # ffmpeg (`docker exec`) convert if host ffmpeg is missing.
+      - /home/hjhj/autotube/output:/home/hjhj/autotube/output
+    environment:
+      - PYTHONUNBUFFERED=1
+      # The fishaudio/fish-speech image is python-slim-based (not nvidia/cuda
+      # based), so we must explicitly ask the nvidia-container-toolkit
+      # to inject CUDA libraries + driver caps; otherwise torch falls back to CPU.
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    shm_size: "8g"
+    runtime: nvidia
+    gpus: all
+    restart: unless-stopped
+    # Default entrypoint.sh runs the WebUI; we want the API server instead.
+    entrypoint: ["python", "tools/api_server.py"]
+    command:
+      - --listen
+      - 0.0.0.0:8080
+      - --llama-checkpoint-path
+      - checkpoints/fish-speech-1.5
+      - --decoder-checkpoint-path
+      - checkpoints/fish-speech-1.5/firefly-gan-vq-fsq-8x1024-21hz-generator.pth
+      - --decoder-config-name
+      - firefly_gan_vq
+      - --half

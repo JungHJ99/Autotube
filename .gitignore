@@ -1,0 +1,50 @@
+# --- Large generated/data artifacts (multi-GB, regeneratable) ---
+output/
+models/
+fish_speech_checkpoints/
+f5tts-venv/
+qwen_tts_test/
+third-party/
+
+# --- Copyrighted / personal assets (do NOT publish) ---
+bgm/
+voices/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+*.venv/
+venv/
+
+# --- Editor / OS ---
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# --- Secrets ---
+.env
+.env.*
+*.token
+*_secret.json
+client_secret*.json
+token.json
+
+# --- Runtime / temp ---
+*.log
+*.tmp
+.cache/
+.ipynb_checkpoints/
+.claude/scheduled_tasks.lock
+.claude/projects/
+
+# --- Symlinks into ignored third-party (would be broken on clone) ---
+.claude/skills/claude-youtube
+
+# --- Generated subtitle/intermediate files in run folders (already covered by output/, but defensive) ---
+.video.srt
+.build_video_tmp/
+_thumb_bg.png
+_frame_*.png
