@@ -110,6 +110,51 @@ def pexels_search(query: str, api_key: str, per_page: int,
     return out
 
 
+# ---------------- Pixabay ----------------
+
+PIXABAY_API = "https://pixabay.com/api/videos/"
+
+def pixabay_search(query: str, api_key: str, per_page: int,
+                   min_dur: float, quality: str) -> list[dict]:
+    qs = urllib.parse.urlencode({
+        "key": api_key,
+        "q": query,
+        "per_page": max(3, min(per_page, 50)),
+        "video_type": "film",
+        "safesearch": "true",
+    })
+    data = http_get_json(f"{PIXABAY_API}?{qs}", {"User-Agent": "autotube/1.0"})
+    # Pixabay returns videos.{large,medium,small,tiny}.{url,width,height}
+    order = {"sd": ["small", "medium"], "hd": ["large", "medium", "small"],
+             "uhd": ["large", "medium"]}.get(quality, ["large", "medium", "small"])
+    out = []
+    for v in data.get("hits", []):
+        if v.get("duration", 0) < min_dur:
+            continue
+        files = v.get("videos", {})
+        picked = None
+        for q in order:
+            f = files.get(q)
+            if f and f.get("url"):
+                picked = f
+                break
+        if not picked:
+            continue
+        out.append({
+            "source": "pixabay",
+            "source_id": v.get("id"),
+            "duration_sec": v.get("duration"),
+            "width": picked.get("width"),
+            "height": picked.get("height"),
+            "download_url": picked["url"],
+            "page_url": v.get("pageURL"),
+            "author": v.get("user"),
+            "author_url": f"https://pixabay.com/users/{v.get('user')}-{v.get('user_id')}/",
+            "license": "Pixabay Content License (free, no attribution required)",
+        })
+    return out
+
+
 # ---------------- DVIDS Hub ----------------
 
 def dvids_search(query: str, api_key: str, per_page: int,
@@ -161,7 +206,13 @@ def fetch_for_query(query: str, source: str, out_dir: Path,
     sources = ["pexels", "dvids"] if source == "both" else [source]
     for s in sources:
         try:
-            if s == "pexels":
+            if s == "pixabay":
+                if not keys.get("pixabay"):
+                    print("  [pixabay] no API key — skip", flush=True)
+                    continue
+                candidates += pixabay_search(query, keys["pixabay"], per_page=10,
+                                             min_dur=min_dur, quality=quality)
+            elif s == "pexels":
                 if not keys.get("pexels"):
                     print("  [pexels] no API key — skip", flush=True)
                     continue
@@ -204,7 +255,7 @@ def main() -> int:
     p.add_argument("--segments", type=Path, default=None,
                    help="segments.json with `stock_query` fields per segment")
     p.add_argument("--out", type=Path, required=True)
-    p.add_argument("--source", choices=["pexels", "dvids", "both"], default="both")
+    p.add_argument("--source", choices=["pixabay", "pexels", "dvids", "both"], default="both")
     p.add_argument("--max", type=int, default=3,
                    help="max clips per query (default 3)")
     p.add_argument("--min-duration", type=float, default=4.0,
@@ -213,13 +264,15 @@ def main() -> int:
                    help="Pexels quality preference (default hd)")
     p.add_argument("--pexels-key", type=str,
                    default=os.environ.get("PEXELS_API_KEY"))
+    p.add_argument("--pixabay-key", type=str,
+                   default=os.environ.get("PIXABAY_API_KEY"))
     p.add_argument("--dvids-key", type=str,
                    default=os.environ.get("DVIDS_API_KEY"))
     p.add_argument("--manifest", type=Path, default=None,
                    help="manifest output (default: <out>/manifest.json)")
     args = p.parse_args()
 
-    keys = {"pexels": args.pexels_key, "dvids": args.dvids_key}
+    keys = {"pexels": args.pexels_key, "pixabay": args.pixabay_key, "dvids": args.dvids_key}
 
     needed = {"pexels", "dvids"} if args.source == "both" else {args.source}
     missing = [k for k in needed if not keys.get(k)]

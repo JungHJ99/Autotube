@@ -22,6 +22,8 @@ services:
       - /home/hjhj/autotube/fish_speech_checkpoints/fish-speech-1.5:/opt/fish-speech/checkpoints/fish-speech-1.5:ro
       # Mount voices read-only at the SAME path host & container.
       - /home/hjhj/autotube/voices:/home/hjhj/autotube/voices:ro
+      # Mount characters (build_video.py corner overlay PNGs) read-only.
+      - /home/hjhj/autotube/characters:/home/hjhj/autotube/characters:ro
       # Mount output read-write so the client can have the container's
       # ffmpeg (`docker exec`) convert if host ffmpeg is missing.
       - /home/hjhj/autotube/output:/home/hjhj/autotube/output
@@ -35,16 +37,9 @@ services:
     shm_size: "8g"
     runtime: nvidia
     gpus: all
-    restart: unless-stopped
-    # Default entrypoint.sh runs the WebUI; we want the API server instead.
-    entrypoint: ["python", "tools/api_server.py"]
-    command:
-      - --listen
-      - 0.0.0.0:8080
-      - --llama-checkpoint-path
-      - checkpoints/fish-speech-1.5
-      - --decoder-checkpoint-path
-      - checkpoints/fish-speech-1.5/firefly-gan-vq-fsq-8x1024-21hz-generator.pth
-      - --decoder-config-name
-      - firefly_gan_vq
-      - --half
+    # 2026-06-04: api_server.py 더 이상 안 씀 (Qwen3-TTS 가 호스트에서 합성).
+    # 이 컨테이너는 build_video.py 의 ffmpeg + Korean fontconfig 용으로만 살아있음.
+    # restart 정책 no — 호스트 재부팅 후 자동 시동 안 함. 필요할 때만 docker compose start.
+    restart: "no"
+    entrypoint: ["sleep", "infinity"]
+    command: []

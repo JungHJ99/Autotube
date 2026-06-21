@@ -130,23 +130,134 @@ def draw_japan_flag(out_w: int = 96, out_h: int = 64) -> Image.Image:
     return img
 
 
+def draw_czech_flag(out_w: int = 96, out_h: int = 64) -> Image.Image:
+    """Procedural 체코기 — white top, red bottom, blue triangle from left
+    reaching the horizontal mid-point."""
+    W_, H_ = out_w * 4, out_h * 4
+    img = Image.new("RGBA", (W_, H_), (255, 255, 255, 255))
+    d = ImageDraw.Draw(img)
+    cz_red = (215, 20, 26)
+    cz_blue = (17, 69, 126)
+    # red lower half
+    d.rectangle([0, H_ // 2, W_, H_], fill=cz_red + (255,))
+    # blue triangle from left edge, apex at center
+    d.polygon([(0, 0), (W_ // 2, H_ // 2), (0, H_)], fill=cz_blue + (255,))
+    return img.resize((out_w, out_h), Image.LANCZOS)
+
+
+def draw_mexico_flag(out_w: int = 96, out_h: int = 64) -> Image.Image:
+    """Procedural 멕시코 국기 — 좌 녹색, 중앙 흰색, 우 빨강. 가운데 작은 갈색 동그라미
+    (독수리 emblem 자리). 썸네일 코너 사이즈에서는 detail 살리지 않고 stylized."""
+    W_, H_ = out_w * 4, out_h * 4
+    img = Image.new("RGBA", (W_, H_), (255, 255, 255, 255))
+    d = ImageDraw.Draw(img)
+    mx_green = (0, 104, 71)
+    mx_red = (206, 17, 38)
+    mx_brown = (139, 87, 42)
+    # 좌측 녹색 1/3
+    d.rectangle([0, 0, W_ // 3, H_], fill=mx_green + (255,))
+    # 우측 빨강 1/3
+    d.rectangle([2 * W_ // 3, 0, W_, H_], fill=mx_red + (255,))
+    # 가운데 emblem (간이) — 갈색 동그라미
+    cx, cy = W_ // 2, H_ // 2
+    r = H_ // 6
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=mx_brown + (255,))
+    return img.resize((out_w, out_h), Image.LANCZOS)
+
+
+_TWEMOJI_DIR = Path(__file__).parent / "twemoji_flags"
+
+
+def _twemoji_flag(country: str, w: int, h: int) -> Image.Image | None:
+    """Load Twemoji PNG for the given country (KR/MX/CZ/JP/US/...) if available.
+
+    Twemoji PNG is square 72x72 RGBA; we resize to (w, h) preserving aspect via pad.
+    Returns None if the country code is not cached on disk.
+    """
+    code_map = {
+        "KOREA": "KR", "한국": "KR", "KR": "KR",
+        "JAPAN": "JP", "일본": "JP", "JP": "JP",
+        "CZECH": "CZ", "CZECHIA": "CZ", "체코": "CZ", "CZ": "CZ",
+        "MEXICO": "MX", "멕시코": "MX", "MX": "MX",
+        "US": "US", "USA": "US", "미국": "US",
+        "BR": "BR", "BRAZIL": "BR", "브라질": "BR",
+        "DE": "DE", "GERMANY": "DE", "독일": "DE",
+        "ES": "ES", "SPAIN": "ES", "스페인": "ES",
+        "FR": "FR", "FRANCE": "FR", "프랑스": "FR",
+        "GB": "GB", "UK": "GB", "ENGLAND": "GB", "영국": "GB",
+    }
+    code = code_map.get(country.upper())
+    if not code:
+        return None
+    path = _TWEMOJI_DIR / f"{code}.png"
+    if not path.exists():
+        return None
+    img = Image.open(path).convert("RGBA")
+    # Fit (w, h) preserving aspect ratio of source (square) — pad if needed.
+    src_w, src_h = img.size
+    scale = min(w / src_w, h / src_h)
+    new_w, new_h = int(src_w * scale), int(src_h * scale)
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+    if (new_w, new_h) == (w, h):
+        return img
+    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    out.paste(img, ((w - new_w) // 2, (h - new_h) // 2), img)
+    return out
+
+
 def get_flag(country: str, w: int = 96, h: int = 64) -> Image.Image:
+    # Prefer Twemoji PNG (real flag emoji) over procedural drawings.
+    emoji_img = _twemoji_flag(country, w, h)
+    if emoji_img is not None:
+        return emoji_img
     if country.upper() in ("KR", "KOREA", "한국"):
         return draw_korean_flag(w, h)
     if country.upper() in ("JP", "JAPAN", "일본"):
         return draw_japan_flag(w, h)
+    if country.upper() in ("CZ", "CZECH", "CZECHIA", "체코"):
+        return draw_czech_flag(w, h)
+    if country.upper() in ("MX", "MEXICO", "멕시코"):
+        return draw_mexico_flag(w, h)
     raise ValueError(f"unsupported flag country: {country}")
+
+
+def draw_corner_flags(bg, codes, position="bottom-right", fh=78, y_override=None):
+    """Draw a row of flags (e.g. ['MX','KR']) with white borders. `position` picks
+    a corner; `y_override` (px) lets you place them anywhere vertically — e.g. just
+    below the sandwich top band. Used via spec `corner_flags`."""
+    if not codes:
+        return
+    fw = int(fh * 1.5)
+    flags = [get_flag(c, fw, fh).convert("RGBA") for c in codes]
+    gap, m = 14, 30
+    total_w = sum(f.width for f in flags) + gap * (len(flags) - 1)
+    x = (bg.width - m - total_w) if "right" in position else m
+    if y_override is not None:
+        y = int(y_override)
+    else:
+        y = (bg.height - m - fh) if "bottom" in position else m
+    d = ImageDraw.Draw(bg)
+    for f in flags:
+        d.rectangle([x - 3, y - 3, x + f.width + 3, y + fh + 3], outline=WHITE, width=3)
+        bg.paste(f, (x, y), f)
+        x += f.width + gap
 
 
 # ============================================================================
 # Stock clip → bg frame
 # ============================================================================
 
+import shutil as _shutil
+_FFMPEG = _shutil.which("ffmpeg") or "/home/hjhj/.local/bin/ffmpeg"
+
+
 def extract_frame(clip_path: Path, time_sec: float, out: Path,
-                  container: str) -> bool:
+                  container: str | None = None) -> bool:
+    # Runs on the host (fish-speech docker no longer used). `container` kept for
+    # signature compatibility but ignored.
     try:
         subprocess.run(
-            ["docker", "exec", container, "ffmpeg", "-y",
+            [_FFMPEG, "-y",
              "-i", str(clip_path.resolve()),
              "-ss", str(time_sec), "-frames:v", "1",
              str(out.resolve())],
@@ -743,7 +854,9 @@ def main() -> int:
     # --- Korean flag corner icon -------------------------------------------
     flag_box = None
     if show_flag:
-        flag = draw_korean_flag(96, 64)
+        # Corner flag defaults to Korea (국뽕) but can be set per-spec, e.g. "MX"
+        # for the 멕시코뽕 pipeline. Backward-compatible: omit → Korean flag.
+        flag = get_flag(spec.get("flag_country", "KR"), 96, 64)
         bd = ImageDraw.Draw(bg)
         fx, fy = 24, H - flag.height - 24  # bottom-left by default
         flag_pos = spec.get("flag_position", "bottom-left")
@@ -787,15 +900,45 @@ def main() -> int:
     # --- Sandwich layout (top text band + mid imagery + bottom text band) -
     if layout == "sandwich":
         # 양쪽 text band 가 H 의 32% 씩, 중간이 36%.
-        top_h_frac = float(spec.get("top_band_frac", 0.32))
-        bottom_h_frac = float(spec.get("bottom_band_frac", 0.32))
+        top_h_frac = float(spec.get("top_band_frac", 0.38))
+        bottom_h_frac = float(spec.get("bottom_band_frac", 0.38))
         top_h = int(H * top_h_frac)
         bottom_h = int(H * bottom_h_frac)
         mid_y0 = top_h
         mid_y1 = H - bottom_h
 
-        # mid band 안에 face cutout 배치 (face_conf 가 있을 때).
-        if face_conf:
+        # mid_images: { "left": path, "right": path, "size": optional int, "gap": optional int }
+        # — 두 이미지를 중간 영역에 좌·우 나란히 배치. face_conf 보다 우선.
+        mid_imgs = spec.get("mid_images")
+        if mid_imgs and isinstance(mid_imgs, dict):
+            mid_h = mid_y1 - mid_y0
+            default_size = min(mid_h - 20, (W - 160) // 2)
+            img_size = int(mid_imgs.get("size", default_size))
+            mid_gap = int(mid_imgs.get("gap", 40))
+            # 좌·우 배치: x = (W - (2*size + gap)) // 2 부터
+            block_w = 2 * img_size + mid_gap
+            base_x = (W - block_w) // 2
+            fy = mid_y0 + (mid_h - img_size) // 2
+            # optional vertical bias (negative = up, positive = down)
+            fy += int(mid_imgs.get("y_offset", 0))
+            run_dir = args.segments.parent.resolve() if args.segments else Path.cwd()
+            for slot, key in [(0, "left"), (1, "right")]:
+                img_rel = mid_imgs.get(key)
+                if not img_rel:
+                    continue
+                img_path = Path(img_rel) if Path(img_rel).is_absolute() else (run_dir / img_rel).resolve()
+                if not img_path.exists():
+                    print(f"  mid_images.{key} missing: {img_path}", file=sys.stderr)
+                    continue
+                im = Image.open(img_path).convert("RGB")
+                im = crop_fill(im, img_size, img_size)
+                im = apply_rounded_mask(im, radius=24, feather=4)
+                fx = base_x + slot * (img_size + mid_gap)
+                bg.paste(im, (fx, fy), im)
+                print(f"  mid_image[{key}]: {img_rel} @ {fx},{fy} size={img_size}")
+
+        # mid band 안에 face cutout 배치 (face_conf 가 있을 때, mid_imgs 가 없을 때만).
+        if face_conf and not mid_imgs:
             face_clip = face_conf.get("clip")
             face_t = float(face_conf.get("t", 2.0))
             face_size = int(face_conf.get("size", min(280, mid_y1 - mid_y0 - 20)))
@@ -855,11 +998,12 @@ def main() -> int:
         side_margin = 36
         max_text_w = W - 2 * side_margin
 
-        # 상단 텍스트
+        # 상단 텍스트 — 호들갑 톤은 큰 글씨 (2026-05-28 사용자 피드백)
         if top_lines:
             tfont = fit_font_multi(top_lines, FONT_BLACK,
                                    max_text_w, top_h - 24,
-                                   start_size=72, min_size=38)
+                                   start_size=int(spec.get("text_start_size", 130)),
+                                   min_size=int(spec.get("text_min_size", 64)))
             line_gap = 8
             lhs = [tfont.getbbox(t)[3] - tfont.getbbox(t)[1] for t in top_lines]
             block_h = sum(lhs) + line_gap * max(0, len(top_lines) - 1)
@@ -875,11 +1019,12 @@ def main() -> int:
                                        stroke_w, stroke_fill)
                 cy += lhs[i] + line_gap
 
-        # 하단 텍스트
+        # 하단 텍스트 — 호들갑 톤은 큰 글씨 (2026-05-28 사용자 피드백)
         if bottom_lines:
             bfont = fit_font_multi(bottom_lines, FONT_BLACK,
                                    max_text_w, bottom_h - 24,
-                                   start_size=72, min_size=38)
+                                   start_size=int(spec.get("text_start_size", 130)),
+                                   min_size=int(spec.get("text_min_size", 64)))
             line_gap = 8
             lhs = [bfont.getbbox(t)[3] - bfont.getbbox(t)[1] for t in bottom_lines]
             block_h = sum(lhs) + line_gap * max(0, len(bottom_lines) - 1)
@@ -894,6 +1039,22 @@ def main() -> int:
                                        accent_words, accent_fill, base_fill,
                                        stroke_w, stroke_fill)
                 cy += lhs[i] + line_gap
+
+        # Kicker — 중간 band 하단에 작은 호들갑 한 줄 더 (멘트 풍성하게). stroke 로 가독성.
+        kicker = spec.get("kicker")
+        if kicker:
+            kfont = fit_font_multi([kicker], FONT_BLACK, max_text_w - 60,
+                                   max(40, int((mid_y1 - mid_y0) * 0.26)),
+                                   start_size=int(spec.get("kicker_size", 58)),
+                                   min_size=32)
+            d = ImageDraw.Draw(bg)
+            kb = kfont.getbbox(kicker)
+            kw = kb[2] - kb[0]
+            kx = (W - kw) // 2 - kb[0]
+            ky = (H - bottom_h) - (kb[3] - kb[1]) - 18 - kb[1]
+            draw_text_with_accents(d, kx, ky, kicker, kfont,
+                                   accent_words, accent_fill, base_fill,
+                                   stroke_w, stroke_fill)
 
         # ?! sticker 는 sandwich 에서 중간 band 우측 상단 모서리에 작게.
         if accent_punct_conf:
@@ -914,6 +1075,93 @@ def main() -> int:
                 draw_wordmark_badge(bg, "파이널K",
                                     position=spec.get("wordmark_position", "bottom-right"))
 
+        # V3 mode: bottom-left counter — black-stroked yellow text (NO box).
+        # Recurring V3 thumbnail convention — replaces bottom band copy.
+        # Single-line OR multi-line via `lines: [{text, font_size}, ...]`.
+        counter_conf = spec.get("bottom_counter_label")
+        if counter_conf:
+            if isinstance(counter_conf, str):
+                ct_lines = [{"text": counter_conf, "font_size": 78}]
+                ct_fill = (255, 220, 0)
+                ct_stroke = (0, 0, 0)
+                ct_stroke_w = 6
+            else:
+                if "lines" in counter_conf:
+                    ct_lines = list(counter_conf["lines"])
+                else:
+                    ct_lines = [{
+                        "text": counter_conf["text"],
+                        "font_size": int(counter_conf.get("font_size", 78)),
+                    }]
+                ct_fill = hex_to_rgb(counter_conf.get("text_color_hex", "#FFDC00"))
+                ct_stroke = hex_to_rgb(counter_conf.get("stroke_color_hex", "#000000"))
+                ct_stroke_w = int(counter_conf.get("stroke_width", 6))
+            line_metrics = []
+            for ln in ct_lines:
+                lf = ImageFont.truetype(FONT_BLACK, int(ln.get("font_size", 78)))
+                lbb = lf.getbbox(ln["text"])
+                lh = lbb[3] - lbb[1]
+                # optional flanking flags
+                fl_left_img = None
+                fl_right_img = None
+                fl_gap = 14
+                if ln.get("flag_left"):
+                    fh = int(lh * 1.05)
+                    fw = int(fh * 1.5)
+                    fl_left_img = get_flag(ln["flag_left"], fw, fh)
+                if ln.get("flag_right"):
+                    fh = int(lh * 1.05)
+                    fw = int(fh * 1.5)
+                    fl_right_img = get_flag(ln["flag_right"], fw, fh)
+                tw = lbb[2] - lbb[0]
+                total_w = tw
+                if fl_left_img is not None: total_w += fl_left_img.width + fl_gap
+                if fl_right_img is not None: total_w += fl_right_img.width + fl_gap
+                line_metrics.append({
+                    "font": lf, "bb": lbb,
+                    "w": total_w, "h": lh,
+                    "tw": tw,
+                    "text": ln["text"],
+                    "flag_left": fl_left_img,
+                    "flag_right": fl_right_img,
+                    "flag_gap": fl_gap,
+                })
+            line_gap = 6
+            total_h = sum(m["h"] for m in line_metrics) + line_gap * (len(line_metrics) - 1)
+            margin = 24
+            base_x = margin + ct_stroke_w
+            cur_y = H - margin - total_h
+            ct_draw = ImageDraw.Draw(bg)
+            for m in line_metrics:
+                cursor_x = base_x
+                if m["flag_left"] is not None:
+                    flag_y = cur_y + (m["h"] - m["flag_left"].height) // 2
+                    bg.alpha_composite(m["flag_left"], (cursor_x, flag_y))
+                    # tiny border for legibility
+                    bd = ImageDraw.Draw(bg)
+                    bd.rectangle([cursor_x - 1, flag_y - 1,
+                                  cursor_x + m["flag_left"].width,
+                                  flag_y + m["flag_left"].height],
+                                 outline=(0, 0, 0, 255), width=2)
+                    cursor_x += m["flag_left"].width + m["flag_gap"]
+                text_x = cursor_x - m["bb"][0]
+                text_y = cur_y - m["bb"][1]
+                ct_draw.text((text_x, text_y), m["text"],
+                             font=m["font"], fill=ct_fill,
+                             stroke_width=ct_stroke_w, stroke_fill=ct_stroke)
+                cursor_x += m["tw"]
+                if m["flag_right"] is not None:
+                    cursor_x += m["flag_gap"]
+                    flag_y = cur_y + (m["h"] - m["flag_right"].height) // 2
+                    bg.alpha_composite(m["flag_right"], (cursor_x, flag_y))
+                    bd = ImageDraw.Draw(bg)
+                    bd.rectangle([cursor_x - 1, flag_y - 1,
+                                  cursor_x + m["flag_right"].width,
+                                  flag_y + m["flag_right"].height],
+                                 outline=(0, 0, 0, 255), width=2)
+                cur_y += m["h"] + line_gap
+
+        draw_corner_flags(bg, spec.get("corner_flags") or [], spec.get("corner_flags_position","bottom-right"), y_override=spec.get("corner_flags_y"))
         bg.convert("RGB").save(args.out, "PNG", optimize=True)
         print(f"saved: {args.out} ({args.out.stat().st_size // 1024} KB)")
         return 0
@@ -1032,6 +1280,7 @@ def main() -> int:
             d.text((bx, by), brand, font=brand_font, fill=YELLOW,
                    stroke_width=4, stroke_fill=BLACK)
 
+    draw_corner_flags(bg, spec.get("corner_flags") or [], spec.get("corner_flags_position","bottom-right"), y_override=spec.get("corner_flags_y"))
     bg.convert("RGB").save(args.out, "PNG", optimize=True)
     print(f"saved: {args.out} ({args.out.stat().st_size // 1024} KB)")
     return 0

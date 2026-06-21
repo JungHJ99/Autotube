@@ -5,7 +5,13 @@ description: Use this skill to run the full autotube pipeline end-to-end — fin
 
 # gukppong-pipeline — end-to-end 국뽕 video pipeline (audio + video, auto)
 
-Coordinates **11 stages** into a single run folder, with **one** human review gate (per-segment voice check after stage 3a). Everything else runs automatically.
+> **이 스킬은 오케스트레이터다. 도메인 지식의 정본은 `docs/`** (포인터):
+> 구조/패턴/DAG → [docs/architecture.md](../../../docs/architecture.md) · 스테이지 인덱스 → [docs/pipeline-stages.md](../../../docs/pipeline-stages.md) ·
+> TTS/믹스/자막싱크 → [docs/tts.md](../../../docs/tts.md) · 스크립트 톤/sign-off/제목 → [docs/script-conventions.md](../../../docs/script-conventions.md) ·
+> 썸네일/spec 스키마 → [docs/thumbnail-conventions.md](../../../docs/thumbnail-conventions.md) · 환경 함정 → [docs/operations.md](../../../docs/operations.md).
+> 회차 검증: `python3 scripts/run_check.py output/<run>/` ([golden-principles.md](../../../golden-principles.md)).
+
+Coordinates the pipeline into a single run folder, with **one** human review gate (per-segment voice check after stage 3a). Everything else runs automatically. 스테이지 전체 목록은 [docs/pipeline-stages.md](../../../docs/pipeline-stages.md).
 
 ## Stages
 
@@ -113,14 +119,7 @@ Decide the slug from the topic (e.g. `2026-05-13-bts-cannes-impact`). Keep it sh
 
 7. **Stage 3a — per-segment audio.** Primary TTS as of 2026-05-21 is **Qwen3-TTS-12Hz-1.7B-Base** (Apache 2.0, voice clone). Runs locally in `f5tts-venv` — no Docker server.
 
-   **Important: free up VRAM first.** Qwen and fish-speech container can't coexist on the 7.65GB RTX 3070 Ti. If fish-speech is up, stop it (ask the user first — `docker compose stop fish-speech` requires their explicit OK):
-
-   ```bash
-   docker ps --filter name=autotube-fish-speech --format '{{.Status}}'
-   # If running, ask user: "fish-speech 컨테이너 멈춰도 돼? Qwen3-TTS 가 VRAM 을 먹어서 같이 못 돈다."
-   # Once authorized:
-   docker compose stop fish-speech
-   ```
+   **fish-speech is deprecated (2026-06-21) — it should NOT be running.** Nothing in the pipeline starts it anymore (build_video uses host ffmpeg; Qwen uses host ffmpeg). If a stale `autotube-fish-speech` container is somehow up and eating VRAM, just stop it: `docker compose stop fish-speech` (no model coexistence concern since nothing needs it).
 
    Then synthesize each segment to its own MP3:
 
@@ -193,12 +192,7 @@ Decide the slug from the topic (e.g. `2026-05-13-bts-cannes-impact`). Keep it sh
 
 10. **Continue to video stages.** Once audio.mp3 is on disk, run stages 4-10 below **without pausing** — no further user input is needed until video.mp4 is built. The final report at the end of stage 10 wraps up the whole run.
 
-   **Before stage 10 (build_video.py):** restart the fish-speech container — `build_video.py` `docker exec`s into it for ffmpeg/ffprobe and the Korean fontconfig:
-   ```bash
-   docker compose start fish-speech
-   sleep 5  # wait for boot
-   ```
-   The container will reload its TTS model into VRAM (~1.8GB) but that's fine because Qwen is no longer running.
+   **Before stage 10 (build_video.py):** nothing to do — `build_video.py` now runs **host ffmpeg/ffprobe** with the host's NotoSansCJK fontconfig. The **fish-speech docker is no longer used** (removed 2026-06-21: it needlessly held GPU VRAM and caused OOM). Do NOT start fish-speech.
 
 ## Re-running just one stage
 
@@ -389,7 +383,9 @@ python3 scripts/build_video.py \
 - mux's `audio.mp3` + burns subtitles via libass (yellow for female, white for male)
 - ensures the Korean font is in the Docker container's fontconfig (idempotent)
 
-Subtitle timing assumes the audio was rendered with the standard `--voice-tempo 1.1 --segment-gap 0.3`. If overridden in stage 3b, pass the same values here via `--voice-tempo` / `--segment-gap`.
+**자막 싱크 (중요):** 옛 fish 칼리브레이션(`--voice-tempo 1.1 --segment-gap 0.3`)을 **쓰지 말 것** — Qwen 오디오와 50초씩 어긋난다.
+`--voice-tempo 1.0` 고정 + `--segment-gap`은 **오디오에서 역산한 실효 갭**(명목 1.0s가 concat 후 ~0.82s로 줄어듦)을 넘긴다.
+역산 공식·근거는 [docs/tts.md](../../../docs/tts.md) "자막 싱크" 섹션 정본.
 
 Verify with a frame extraction from a female-voice segment (should show PDF overlay) and a male-voice segment (should be full-screen stock):
 
@@ -410,50 +406,10 @@ Read both PNGs to confirm the layout. Don't pause for user approval — just con
 
 After video.mp4 is on disk, generate the YouTube thumbnail. Two sub-steps. **No user pause** — runs straight through.
 
-> **Design 컨벤션 (2026-05-22 바이스톰/쓸모왕 실제 썸네일 분석 후 강제 — `layout: "sandwich"` 가 default):**
->
-> 바이스톰 코리아 (380K) + 쓸모왕 (781K) 의 실제 썸네일을 다운로드해서 분석한 결과, 두 채널 모두 **수직 3분할 샌드위치 구조** 를 쓴다:
-> - **상단 32% 검정 띠** — 따옴표로 시작하는 큰 텍스트 2줄
-> - **중간 36% imagery 영역** — 가운데 stock frame + 좌측 작은 빨간 "외신특보" 라벨 + 우측 face cutout(들)
-> - **하단 32% 검정 띠** — reveal 텍스트 2줄
->
-> 옛 face-overlay 레이아웃 (`face-overlay` — 가운데 큰 헤드라인 + 우측 face) 은 retain 하되 **default 는 sandwich 로 전환**. face-overlay 는 backward compatibility / 디자인 실험용으로만.
->
-> sandwich 모드에선 **태극기 코너 아이콘과 "파이널K" wordmark 는 기본 false** (경쟁 채널들이 안 씀 — 텍스트 띠와 충돌). 채널 정체성은 텍스트 톤과 권위 라벨로 표현.
->
-> 분석 보고서: `research/competitor_thumbnails_2026-05-21.md` (v1 → v2 face-overlay 분석), `research/headline_patterns_2026-05-22.md` (헤드라인 카피), `research/headline_patterns_bystorm_ssulmowang_2026-05-22.md` (sandwich 레이아웃 + 9개 카피 패턴).
-
-> **헤드라인 카피 컨벤션 (2026-05-22 바이스톰 코리아 + 쓸모왕 패턴 적용):** 국뽕 commentary 정점 두 채널 (바이스톰 380K, 쓸모왕 781K) 의 제목 작법은 다음 9개 패턴으로 환원된다. 분석: `research/headline_patterns_bystorm_ssulmowang_2026-05-22.md`.
->
-> **YouTube 제목 (long form) 3마디 구조:**
-> `[인용/사건 1마디] + [세계/자국 반응 1마디] + [reveal 명사 1마디]`
->
-> 예 (트라이얼 v4 적용본): `직장 버리고 한국行 택해버린 日 여성들, 자국 명문대 교수가 논문으로 직접 폭로한 충격적 진짜 이유`
-> = [직장 버리고 한국行 택해버린 日 여성들] + [자국 명문대 교수가 논문으로 직접 폭로한] + [충격적 진짜 이유]
->
-> **필수 패턴:**
-> 1. **인용 prefix** — 따옴표로 영상 시작 (`"한국이 또 미친걸 공개했다" ...`)
-> 2. **~버린/~깨부순/폭로한** — 완료 동사 어미 (`눈치채버린`, `되갚아버린`, `폭로해버렸다`). 단순 과거 "했다" 보다 훨씬 강함.
-> 3. **한자 single-char** — `韓`, `美`, `日`, `中`, `한국行`. 한글 사이 시각 anchor.
-> 4. **reveal 명사로 종료** — `이유`, `실제 상황`, `정체`, `광경`, `비밀`, `반격`. 동사로 끝내지 말 것.
-> 5. **숫자 = 권위** — `66.2%`, `8억 전세계 팬덤`. 막연한 "많이" 금지.
-> 6. **결국/드디어/현재/이제** — 시간성 부여 marker.
-> 7. **세계 반응 동사** — 한국 = 행위자, 세계 = 반응자 (`전세계 매체들 난리났다`, `美 도시전체 풍경을 바꿔버리자`).
-> 8. **자국 비판 hook** (일본/중국 영상 특화) — `일본이 제발 멈춰달라고한`, `자국 학자가 폭로한`. 비판자가 자국 본인이라는 인지부조화.
->
-> **썸네일 텍스트 (2줄 short form):**
-> - 노란 강조어는 **의미 단위 2-4글자** (`한국行`, `진짜 이유`, `폭로`, `66.2%`)
-> - 1글자 거대 강조 (`왜?`) 와 `충격/발칵/경악` 단독은 **금지**
-> - 한자 single-char (`日`, `美`) 적극 활용 — 시각 가중치 + 한 글자에 의미 압축
-> - 두 줄 모두 hook 이 있어야 함 (한 줄만 강하면 약함)
-
-> **권위 라벨 컨벤션 (2026-05-22 한국 시청자 가독성 반영):**
-> - **한국어가 default.** 영어 단독은 한국인이 못 알아봄. (`"Itoi · Korea Journal 2026"` → ✗)
-> - **포맷:** `[대학명/매체명] + [직함] + [형식]` — 예: `리츠메이칸大 교수 논문 심층분석`, `NYT 보도 한국 분석`, `옥스포드 교수 인용`, `BBC 다큐 심층분석`.
-> - **영문은 1-2 글자 acronym 만 허용** (`NYT`, `BBC`, `WSJ` 처럼 한국인도 즉시 인식 가능한 것).
-> - **한자 혼용 OK** — `리츠메이칸大`, `日 학자`, `美 교수`. 가독성 + 시각 가중치 둘 다 좋다.
-> - **국기:** 저자/매체 국가의 작은 국기를 라벨 박스 좌측에 끼워넣어 (`label.flag: "JP"` 등) 출처 시그널을 강화한다.
-> - **font_size:** default 36. 텍스트가 12자 이상이면 38-42 정도로 *키워서* 가독성 보강 (작게 줄이지 말 것 — 한국 시청자가 못 알아본다는 게 더 큰 손실).
+> **모든 디자인 컨벤션의 정본은 [docs/thumbnail-conventions.md](../../../docs/thumbnail-conventions.md) 로 이관됨.**
+> sandwich 레이아웃(default)·헤드라인 9패턴·호들갑 미사여구 사전·권위 라벨 규칙·`thumbnail_spec.json` 전체 스키마·렌더 후
+> 체크리스트·docker 폴백 함정이 거기 있다. 제목/본문 톤은 [docs/script-conventions.md](../../../docs/script-conventions.md) §7.
+> 아래는 **실행 절차(11a/b/c)만** 남긴다.
 
 ### 11a — Build the spec
 
@@ -524,51 +480,9 @@ After video.mp4 is on disk, generate the YouTube thumbnail. Two sub-steps. **No 
 }
 ```
 
-**Field 시맨틱:**
-
-| 필드 | 효과 | 기본값 |
-|------|------|--------|
-| `layout` | `"sandwich"` (바이스톰/쓸모왕 패턴, default) / `"face-overlay"` (옛 v2-v4) | `"face-overlay"` |
-| `top_text_lines` | sandwich 모드 상단 띠 텍스트 (1-2줄) | `[]` |
-| `bottom_text_lines` | sandwich 모드 하단 띠 텍스트 (1-2줄) | `[]` |
-| `top_band_frac` | sandwich 상단 띠 높이 비율 | `0.32` |
-| `bottom_band_frac` | sandwich 하단 띠 높이 비율 | `0.32` |
-| `sandwich_band_alpha` | sandwich 상/하단 검정 띠 alpha | `215` |
-| `sandwich_band_fill_hex` | sandwich 띠 색 | `#000000` |
-| `background.type` | `"stock"` / `"split"` / `"gradient"` / `"solid"` | `"stock"` |
-| `background.stock_path` | 배경에 쓸 stock clip 의 경로 (run dir 기준 상대) | segments.json 의 첫 stock_path 자동 픽 |
-| `background.t` | 프레임 추출 시점 (초) | 2.0 |
-| `background.darken` | 0..1 배경 어둡기 | 0.40 |
-| `background.bottom_band_alpha` | 하단 검정 그라데이션 띠 최종 alpha (0-255) | 220 |
-| `background.bottom_band_start` | 하단 띠 시작점 (frac of H) | 0.42 |
-| `background.left_path`, `right_path` | type=split 일 때 좌/우 클립 | — |
-| `background.left_t`, `right_t` | 좌/우 프레임 추출 시점 | 2.0 |
-| `background.left_flag`, `right_flag` | type=split 일 때 반투명 국기 워터마크 (`"KR"` / `"JP"`) | — |
-| `background.show_vs` | type=split 일 때 가운데 "VS" 글자 | true |
-| `face.clip` | 얼굴 컷아웃에 쓸 클립 (run dir 기준 상대) | — (없으면 face 안 그림) |
-| `face.t` | 프레임 추출 시점 (초) | 2.0 |
-| `face.size` | 컷아웃 정사각 크기 (px) | 360 |
-| `face.position` | `"right"` / `"left"` / `"center"` | `"right"` |
-| `text_lines` | 2줄 텍스트 배열 (각 줄 한국어 5-12자) | youtube.title 자동 2분할 |
-| `accent_words` | 노란색으로 칠할 단어 / 부분 문자열 리스트 | `[]` |
-| `accent_color_hex` | 강조어 색 | `#FFDC00` |
-| `base_text_color_hex` | 기본 텍스트 색 | `#FFFFFF` |
-| `stroke_color_hex`, `stroke_width` | 텍스트 외곽선 | 검정, 12px |
-| `text_band` | 텍스트 줄 뒤 반투명 박스 (true / false / object) | true (가독성 보장) |
-| `text_band.fill_hex`, `alpha`, `pad_x`, `pad_y` | text_band 디테일 | 검정, 170, 28, 8 |
-| `label` | 좌상단 권위 라벨 (string or object) | none |
-| `label.text`, `fill_hex`, `text_color_hex` | label 디테일 | "...", `#DC2626`, `#FFFFFF` |
-| `label.flag` | 라벨 박스 안 좌측 작은 국기 — **저자 또는 출처 국가**. `"JP"` / `"KR"` | none |
-| `label.font_size` | 라벨 글자 크기. **줄이지 말 것** — 한국어 라벨이 길어도 36-42 유지 (시청자가 못 알아보면 손실이 더 크다). 12자 이상이면 38-42. | 36 |
-| `accent_punct` | 회전 ?! sticker (string or object) | none |
-| `accent_punct.text`, `color_hex`, `rotate`, `size`, `position` | punct 디테일 | "?!", yellow, -8, 160, "right" |
-| `show_flag` | 작은 코너 태극기 | true |
-| `flag_position` | `"top-left"` / `"bottom-left"` / `"top-right"` / `"bottom-right"` | `"bottom-left"` |
-| `show_wordmark` | "파이널K" 표시 | true |
-| `wordmark_badge` | true 면 둥근 배지 (검정+노란+흰테), false 면 글자만 | true |
-| `wordmark_position` | 4-corner 중 하나 | `"bottom-right"` |
-
-`_brief_source` 와 `_notes` 는 렌더러가 무시 — traceability 용으로 남겨두는 메타데이터.
+**Field 시맨틱 전체 표(모든 필드·기본값)는 [docs/thumbnail-conventions.md](../../../docs/thumbnail-conventions.md) "thumbnail_spec.json 스키마" 섹션이 정본.**
+sandwich 모드는 `layout:"sandwich"` + `top_text_lines`/`bottom_text_lines`(호들갑어 ≥2) + `top/bottom_band_frac`(default 0.38) +
+`text_start_size`(130). 권위 라벨 `label.flag`는 `KR`/`JP`만(그 외 ValueError). `_brief_source`/`_notes`는 렌더러가 무시(traceability).
 
 ### 11c — Render
 

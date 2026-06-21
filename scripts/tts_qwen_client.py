@@ -236,8 +236,12 @@ def run_segments_mode(args: argparse.Namespace) -> int:
             return 2
 
         ref_path, ref_text = voice_ref[voice]
+        # Per-segment language override (e.g. Spanish dub) falls back to the
+        # run-wide --language default. Qwen3-TTS is cross-lingual: the Korean
+        # ref voice can speak Spanish, so the ref language need not match.
+        seg_language = seg.get("language") or args.language
         preview = text[:60].replace("\n", " ")
-        print(f"  [{n:>2}] {voice:6s} {role:11s} {len(text):>3} chars: {preview}…")
+        print(f"  [{n:>2}] {voice:6s} {role:11s} {seg_language:8s} {len(text):>3} chars: {preview}…")
 
         # Pad the input text so Qwen's LM doesn't EOS too aggressively on the
         # final syllable — a trailing period + space gives the model a tail
@@ -250,7 +254,7 @@ def run_segments_mode(args: argparse.Namespace) -> int:
         t1 = time.time()
         wavs, sr = model.generate_voice_clone(
             text=synth_text,
-            language="Korean",
+            language=seg_language,
             ref_audio=ref_path,
             ref_text=ref_text,
         )
@@ -354,6 +358,11 @@ def main() -> int:
                    help="(synth) volume multiplier applied to female segments. Default 1.0")
     p.add_argument("--tail-pad", type=float, default=0.25,
                    help="(synth) seconds of silence appended to each segment to prevent EOS clipping. Default 0.25s")
+    p.add_argument("--language", default="Korean",
+                   help="(synth) Qwen3-TTS target language for synthesis. Default 'Korean'. "
+                        "Use 'Spanish' for the Mexico (멕시코뽕) pipeline. A per-segment "
+                        "'language' field in segments.json overrides this. Supported: "
+                        "Chinese/English/French/German/Italian/Japanese/Korean/Portuguese/Russian/Spanish.")
 
     # Concat mode BGM mixing args. Qwen tempo is natural enough that we run
     # 1.0x (no atempo bump), and the gap between segments is ~1s for breathing.

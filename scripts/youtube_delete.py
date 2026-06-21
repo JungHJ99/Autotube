@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from pathlib import Path
 """youtube_delete.py — delete YouTube videos by ID.
 
 Companion to youtube_upload.py. Reuses the same OAuth token
@@ -21,8 +22,8 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("video_ids", nargs="+", help="YouTube video IDs to delete")
     p.add_argument("--dry-run", action="store_true")
-    p.add_argument("--client-secret", default=DEFAULT_CLIENT_SECRET)
-    p.add_argument("--token-file", default=DEFAULT_TOKEN)
+    p.add_argument("--client-secret", type=Path, default=DEFAULT_CLIENT_SECRET)
+    p.add_argument("--token-file", type=Path, default=DEFAULT_TOKEN)
     args = p.parse_args()
 
     if args.dry_run:

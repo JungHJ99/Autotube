@@ -40,7 +40,8 @@ from googleapiclient.http import MediaFileUpload
 
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
-          "https://www.googleapis.com/auth/youtube"]
+          "https://www.googleapis.com/auth/youtube",
+          "https://www.googleapis.com/auth/youtube.readonly"]
 
 DEFAULT_CONFIG_DIR = Path.home() / ".config" / "autotube"
 DEFAULT_CLIENT_SECRET = DEFAULT_CONFIG_DIR / "client_secret.json"
@@ -139,7 +140,7 @@ def truncate_title(title: str, limit: int = 100) -> str:
 
 def upload_video(service, video_path: Path, meta: dict,
                  privacy: str, category_id: str,
-                 dry_run: bool) -> str | None:
+                 dry_run: bool, lang: str = "ko") -> str | None:
     title = truncate_title(meta["title"], 100)
     description = build_description(meta["description"], meta["hashtags"])
     tags = build_tags(meta["hashtags"])
@@ -150,8 +151,8 @@ def upload_video(service, video_path: Path, meta: dict,
             "description": description,
             "tags": tags,
             "categoryId": category_id,
-            "defaultLanguage": "ko",
-            "defaultAudioLanguage": "ko",
+            "defaultLanguage": lang,
+            "defaultAudioLanguage": lang,
         },
         "status": {
             "privacyStatus": privacy,
@@ -238,6 +239,9 @@ def main() -> int:
                    help="privacy status (default: unlisted — promote via Studio later)")
     p.add_argument("--public", action="store_true",
                    help="shortcut for --privacy public")
+    p.add_argument("--lang", default="ko",
+                   help="defaultLanguage/defaultAudioLanguage (BCP-47). 'ko' for 파이널K, "
+                        "'es-MX' for the MexiKorea (멕시코뽕) channel. Default ko.")
     p.add_argument("--category-id", default="22",
                    help="YouTube category ID. 22=People&Blogs (default), 24=Entertainment, 25=News&Politics")
 
@@ -287,7 +291,7 @@ def main() -> int:
 
     vid = upload_video(service, video_path, meta,
                        privacy=privacy, category_id=args.category_id,
-                       dry_run=args.dry_run)
+                       dry_run=args.dry_run, lang=args.lang)
 
     if args.dry_run:
         return 0

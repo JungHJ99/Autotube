@@ -1,87 +1,69 @@
 # autotube
 
-해외 K-pop/K-culture 자료를 모아 한국어 썰풀이 스크립트로 변환하고 TTS로 음성까지 만드는 국뽕 YouTube 콘텐츠 자동화 파이프라인.
+해외(비-한국) K-culture/경제 자료 **한 편**을 깊게 파서, 한국어 듀얼보이스(번역자 여성 + 사설가 남성)
+스크립트 → Qwen3-TTS MP3 → stock B-roll + PDF overlay + 자막 burn-in 영상 → 썸네일 → YouTube 업로드까지
+자동 생성하는 회차 반복형 국뽕 콘텐츠 파이프라인. 채널명 **파이널K**.
 
-영상 합성(편집·자막·업로드)은 아직 범위 밖. **소스 탐색 → 스크립트 → MP3** 까지가 현재 구현 범위.
+> **harness 정본은 [AGENTS.md](AGENTS.md)** — 구조·패턴·스테이지·컨벤션·운영 함정은 거기서 `docs/`로 이어진다.
+> 이 README는 빠른 개요만 담는다.
 
-## 구조
+## 한눈에
+
+```
+"BTS 그래미 영향 주제로 국뽕 영상 만들어줘"   ← 대화에서 gukppong-pipeline 스킬 발동
+   → 12스테이지 자동 (소스→스크립트→TTS→영상→썸네일→업로드)
+   → 유일한 사용자 게이트: 세그먼트 MP3 검수 (3a 후, "합치자" 신호 대기)
+   → 업로드는 dry-run preview 후 confirm
+```
+
+## 디렉토리
 
 ```
 autotube/
+├── AGENTS.md                 # ★ 진입점 (목차)
+├── golden-principles.md      # 기계 검증 불변식  (게이트: scripts/run_check.py)
+├── rubric.md                 # 회차 QA 채점표
+├── learning.md               # 실패/교훈/생략 결정 (append-only)
+├── docs/                     # system of record
+│   ├── architecture.md       #   패턴·12스테이지 DAG·run 폴더 규약
+│   ├── pipeline-stages.md    #   스테이지별 입출력/검증 런북
+│   ├── tts.md                #   Qwen3-TTS·믹스 파라미터·자막 싱크
+│   ├── script-conventions.md #   스크립트 톤·세그먼트 구조·sign-off·제목 톤
+│   ├── thumbnail-conventions.md #  sandwich 레이아웃·헤드라인·spec.json 스키마
+│   └── operations.md         #   CUDA wedge·web→PDF·faststart 등 함정 복구
 ├── .claude/
-│   ├── agents/
-│   │   ├── kpop-source-finder.md   # 해외 논문/리포트/뉴스 탐색
-│   │   └── kpop-script-writer.md   # 썰풀이 한국어 스크립트 생성
-│   └── skills/
-│       ├── gukppong-pipeline/      # 1→2→3 전체 파이프라인 오케스트레이션
-│       └── tts-sovits/             # GPT-SoVITS 호출 (MP3 생성)
-├── scripts/
-│   └── tts_sovits_client.py        # GPT-SoVITS API 클라이언트
-├── voices/                          # 레퍼런스 음성 (각 폴더에 ref.wav + ref.txt)
-└── output/                          # 회차별 결과물
-    └── <YYYY-MM-DD>-<topic-slug>/
-        ├── sources.json
-        ├── script.txt
-        ├── script_notes.md
-        └── audio.mp3
+│   ├── agents/               # kpop-source-finder, kpop-script-writer, subtitle-normalizer, stock-query-tagger
+│   └── skills/               # gukppong-pipeline(오케스트레이터), tts-fish, claude-youtube
+├── scripts/                  # tts_qwen_client, build_video, build_thumbnail, stock_fetcher,
+│                             #   youtube_upload, run_check.py ...
+├── voices/                   # male_voice/, female_voice/ (각 ref.wav + ref.txt + LICENSE.txt)
+├── models/                   # qwen3-tts-12hz-base/ (~4.3GB)
+├── bgm/  research/  patches/  third-party/  output/
+└── foundry-harness/          # 이 서브-하네스를 주조/진화한 메타-하네스 (/forge·/evolve)
 ```
 
-## 사용
+## TTS 백엔드
 
-### 전체 파이프라인
-
-Claude 대화에서:
-> "BTS 그래미 영향 주제로 국뽕 영상 만들어줘"
-
-→ `gukppong-pipeline` skill이 발동되어 소스 탐색 → 스크립트 → (음성 확인) → TTS 까지 진행. TTS 직전에 한 번 컨펌 받음.
-
-### 단계별
-
-- 소스만: "BTS 그래미 관련 해외 자료 찾아줘" → `kpop-source-finder` agent
-- 스크립트만: "이 sources.json으로 스크립트 써줘" → `kpop-script-writer` agent
-- 음성만: "이 script.txt로 음성 만들어줘" → `tts-sovits` skill
-
-## TTS 셋업 (한 번만)
-
-GPT-SoVITS는 도커로 돌림. 이미지에 사전학습 모델·G2PW·NLTK·JTalk 사전 다 포함되어 있어서 별도 다운로드 없음.
-
-**전제조건:** Docker 24+, `docker compose` 플러그인, `nvidia-container-toolkit`, NVIDIA 드라이버 525+, 디스크 ~15GB.
-
-```bash
-cd /home/hjhj/autotube
-docker compose pull       # 최초 1회: ~10-15GB 다운로드
-docker compose up -d      # API 서버 시작 (백그라운드)
-docker compose logs -f gpt-sovits   # "Uvicorn running on http://0.0.0.0:9880" 뜰 때까지
-```
-
-설치 후 운영 명령:
-- `docker compose down` — API 서버 중지 (VRAM 해제)
-- `docker compose restart gpt-sovits` — 재시작
-- `docker exec -it autotube-gpt-sovits bash` — 컨테이너 셸 진입 (디버깅)
-
-자세한 트러블슈팅은 [.claude/skills/tts-sovits/SKILL.md](.claude/skills/tts-sovits/SKILL.md).
-
-호스트에 `ffmpeg` 없어도 됨 — 클라이언트가 자동으로 컨테이너의 ffmpeg를 `docker exec`로 호출.
+현재 **Qwen3-TTS-12Hz-1.7B-Base** (Apache 2.0, voice clone, `f5tts-venv/`). fish-speech 1.5는 LEGACY —
+컨테이너는 `build_video.py`/`build_thumbnail.py`의 in-container ffmpeg + Korean fontconfig 용도로만 일시 시동
+(Qwen과 VRAM 공유 불가). 세대 이력·VRAM 제약·믹스 파라미터는 [docs/tts.md](docs/tts.md).
 
 ## 레퍼런스 음성
 
-`voices/<name>/` 폴더에:
-- `ref.wav` — 3~10초, 깨끗한 한국어 발화 (배경음·잡음 없음)
-- `ref.txt` — ref.wav의 정확한 전사 (오타 = 음질 저하)
-- `LICENSE.txt` — 오픈소스/CC 라이선스 또는 본인 녹음임을 명시
+`voices/<name>/`에 `ref.wav`(3–10초, 깨끗한 한국어) + `ref.txt`(정확한 전사) + `LICENSE.txt`.
+**실존 인물의 동의 없는 딥페이크 음성 금지.**
 
-**중요:** 실존 인물의 동의 없는 딥페이크 음성은 사용 금지.
+## 회차 검증
+
+```bash
+python3 scripts/run_check.py output/<run>/     # golden-principles 불변식 기계 검증 (exit 0 = 통과)
+```
 
 ## 의존성
 
-- Python 3.10+
-- `requests` (TTS 클라이언트)
-- `ffmpeg` (WAV → MP3)
-- GPT-SoVITS (별도 설치)
+Python 3.10+, `qwen-tts`/`torch`(venv), 호스트 `ffmpeg`(`~/.local/bin`), `pdftoppm`(poppler-utils),
+`google-chrome`(web→PDF), Docker(영상 빌드용 fontconfig). `PEXELS_API_KEY`(stock), YouTube OAuth(업로드, 1회 셋업).
 
-## 범위 밖 (TODO)
+## 범위 밖 (사용자가 직접 요구할 때만)
 
-- 영상 합성 (스틸 이미지 + 자막 + 음성 → mp4)
-- 자동 자막 (Whisper 등)
-- YouTube 업로드 자동화
-- 다중 화자 / 대화형 스크립트
+per-segment B-roll cut-between-clips, PDF 차트 auto-extraction, Ken-burns/카메라 무브, intro/outro 스팅, 다중 화자(>2).

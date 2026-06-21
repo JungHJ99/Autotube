@@ -1,3 +1,6 @@
+# --- Nested standalone repo (foundry-harness has its own git/remote) ---
+foundry-harness/
+
 # --- Large generated/data artifacts (multi-GB, regeneratable) ---
 output/
 models/
